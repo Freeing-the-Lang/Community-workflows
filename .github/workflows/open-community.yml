@@ -5,29 +5,33 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+  discussions: write
+  issues: write
+
 jobs:
+  # 1. 커뮤니티 표준 파일(README, LICENSE 등) 자동 생성 및 확인
   community:
     name: 📦 Ensure Community Standards
     runs-on: ubuntu-latest
-    # 🚨 Infinite loop prevention: Skip if the actor is the bot itself
+    # 🚨 봇이 만든 커밋에 의해 무한 루프가 도는 것을 방지
     if: github.actor != 'github-actions[bot]'
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: 🏗️ Create Missing Community Files
         shell: bash
         run: |
           mkdir -p .github/ISSUE_TEMPLATE
-          echo "🔍 Checking community standard files..."
+          echo "🔍 커뮤니티 표준 파일 확인 중..."
 
-          # --- README ---
+          # --- README (없으면 생성) ---
           if [ ! -f README.md ]; then
             echo "# Freeing-the-Lang" > README.md
             echo "Language unification ecosystem — automated community setup." >> README.md
           fi
 
-          # --- LICENSE ---
+          # --- LICENSE (MIT) ---
           if [ ! -f LICENSE ]; then
             echo "MIT License" > LICENSE
             echo "Copyright (c) $(date +%Y) Freeing-the-Lang" >> LICENSE
@@ -58,25 +62,28 @@ jobs:
             printf "# 🧩 Pull Request\n## Summary\n## Related Issue\n- [ ] Build successful\n- [ ] ProofLedger updated\n- [ ] Linked Discussions/Issues\n" > .github/PULL_REQUEST_TEMPLATE.md
           fi
 
-          # --- GIT COMMIT ---
+          # --- 변경 사항 커밋 ---
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md LICENSE CODE_OF_CONDUCT.md CONTRIBUTING.md SECURITY.md .github
-          git commit -m "chore: 🧩 Auto ensure community standard files" || echo "No changes"
-          git push origin main || echo "Push skipped"
+          # 변경 사항이 있을 때만 커밋
+          git diff --staged --quiet || git commit -m "chore: 🧩 Auto ensure community standard files"
+          git push origin main || echo "Nothing to push"
 
+  # 2. 모든 커밋을 ProofLedger에 영구 기록
   proofledger:
     name: 🧾 ProofLedger Update
     runs-on: ubuntu-latest
     needs: community
-    permissions:
-      contents: write
+    # 봇이 아닌 경우에만 실행
+    if: github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/checkout@v4
       - name: 🔒 Append ProofLedger Entry
         shell: bash
         run: |
           mkdir -p proofledger
+          # 로그 엔트리 생성
           {
             echo "Commit SHA: $GITHUB_SHA"
             echo "Author: $GITHUB_ACTOR"
@@ -85,39 +92,38 @@ jobs:
             echo "SHA256: $(git rev-parse HEAD | sha256sum | cut -d' ' -f1)"
             echo "--------------------------------------"
           } >> proofledger/proofledger.txt
+          
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add proofledger/proofledger.txt
           git commit -m "chore: 🔒 Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
           git push origin main || echo "Push skipped"
 
+  # 3. 리포지토리의 Discussions 기능 활성화 및 카테고리 생성
   enable-discussions:
     name: ⚙️ Enable Discussions Automatically
     runs-on: ubuntu-latest
     if: github.actor != 'github-actions[bot]'
-    permissions:
-      discussions: write
     steps:
       - uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
-            console.log("🔧 Enabling Discussions feature if disabled...");
+            console.log("🔧 Discussions 기능 활성화 확인 중...");
             try {
-              // Note: Automatically enabling discussions via API often requires Admin scope PAT.
-              // If GITHUB_TOKEN fails, it must be enabled manually in Repo Settings.
+              // 일부 권한 설정에 따라 403 에러가 날 수 있으나 시도함
               await github.request("PATCH /repos/{owner}/{repo}", {
                 owner,
                 repo,
                 has_discussions: true
               });
-              console.log("✅ Discussions feature is enabled.");
+              console.log("✅ Discussions 기능이 활성화되었습니다.");
             } catch (e) {
-              console.error("⚠️ Could not auto-enable Discussions (Token lacks admin scope). Please enable manually in Repo Settings.", e.message);
+              console.error("⚠️ 자동 활성화 실패 (토큰 권한 부족 가능성). Repo Settings에서 수동으로 켜주세요.", e.message);
             }
             
-            console.log("🔎 Checking for 'General' category...");
+            // 'General' 카테고리 확인 및 생성
             const repoData = await github.graphql(`
               query($owner:String!, $repo:String!){
                 repository(owner:$owner, name:$repo){
@@ -130,9 +136,9 @@ jobs:
 
             const general = repoData.repository.discussionCategories.nodes.find(c => c.name === "General");
             if (general) {
-              console.log("✅ 'General' category exists.");
+              console.log("✅ 'General' 카테고리가 이미 존재합니다.");
             } else {
-              console.log("➕ Creating 'General' category...");
+              console.log("➕ 'General' 카테고리 생성 중...");
               try {
                 const createCat = await github.graphql(`
                   mutation($repoId:ID!){
@@ -142,18 +148,18 @@ jobs:
                       description:"General discussion topics"
                     }){discussionCategory{id name}}
                   }`, { repoId: repoData.repository.id });
-                console.log("✅ Created:", createCat.createDiscussionCategory.discussionCategory.name);
+                console.log("✅ 생성 완료:", createCat.createDiscussionCategory.discussionCategory.name);
               } catch (e) {
-                 console.error("Failed to create 'General' category. Check permissions.", e.message);
+                 console.error("카테고리 생성 실패.", e.message);
               }
             }
 
+  # 4. 커밋 내용을 바탕으로 새 Discussion 생성
   discussion:
     name: 💬 Create Discussion for Commit
     runs-on: ubuntu-latest
     needs: enable-discussions
-    permissions:
-      discussions: write
+    if: github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/github-script@v7
         with:
@@ -171,7 +177,7 @@ jobs:
             
             const category = repoInfo.repository.discussionCategories.nodes.find(c => c.name === "General");
             if (!category) {
-              console.error("❌ 'General' category not found. Skipping discussion creation.");
+              console.log("❌ General 카테고리를 찾을 수 없어 토론 생성을 건너뜁니다.");
               return;
             }
 
@@ -194,14 +200,13 @@ jobs:
               }`,
               { repoId: repoInfo.repository.id, catId: category.id, title, body }
             );
-            console.log("✅ Discussion created:", result.createDiscussion.discussion.url);
+            console.log("✅ Discussion 생성됨:", result.createDiscussion.discussion.url);
 
+  # 5. 이슈 생성 및 커밋 작성자 자동 할당 (Auto Assign)
   issue:
-    name: 🪶 Auto Create Issue
+    name: 🪶 Auto Create Issue & Assign
     runs-on: ubuntu-latest
     if: github.actor != 'github-actions[bot]'
-    permissions:
-      issues: write
     steps:
       - name: 🚀 Create Issue for Commit
         uses: peter-evans/create-issue@v5
@@ -217,4 +222,5 @@ jobs:
           labels: |
             automation
             proofledger
+          # 👇 커밋 작성자를 담당자로 자동 지정
           assignees: ${{ github.actor }}
