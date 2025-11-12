@@ -1,10 +1,8 @@
-name: 🌍 Open Community + ProofLedger Automation
+name: 🌍 Open Community + ProofLedger + Auto Discussion Enable
 
 on:
   push:
     branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
@@ -12,17 +10,19 @@ permissions:
   issues: write
   pull-requests: write
   discussions: write
+  administration: write
 
 jobs:
   community:
     name: 📦 Ensure Community Standards
     runs-on: ubuntu-latest
     steps:
-      - name: 🧭 Checkout Repository
-        uses: actions/checkout@v4
-      - name: 🏗️ Check & Create Community Files
+      - uses: actions/checkout@v4
+      - name: 🏗️ Create Missing Community Files
+        shell: bash
         run: |
           mkdir -p .github/ISSUE_TEMPLATE
+          echo "🔍 Checking community standard files..."
 
           if [ ! -f README.md ]; then
             echo "# Freeing-the-Lang" > README.md
@@ -35,22 +35,34 @@ jobs:
           fi
 
           if [ ! -f CODE_OF_CONDUCT.md ]; then
-            echo "# Code of Conduct" > CODE_OF_CONDUCT.md
-            echo "Be respectful, collaborate, and keep discussions open." >> CODE_OF_CONDUCT.md
+cat > CODE_OF_CONDUCT.md <<'EOF'
+# Code of Conduct
+We follow the Contributor Covenant Code of Conduct.
+- Be respectful and constructive.
+- No harassment or hate speech.
+- Collaborate openly and fairly.
+EOF
           fi
 
           if [ ! -f CONTRIBUTING.md ]; then
-            echo "# Contributing" > CONTRIBUTING.md
-            echo "Fork, branch, commit clearly, and open PRs. ProofLedger updates automatically." >> CONTRIBUTING.md
+cat > CONTRIBUTING.md <<'EOF'
+# Contributing
+1. Fork and branch.
+2. Commit clearly.
+3. All pushes automatically update ProofLedger and Discussions.
+EOF
           fi
 
           if [ ! -f SECURITY.md ]; then
-            echo "# Security Policy" > SECURITY.md
-            echo "Report vulnerabilities privately; response in 48 hours." >> SECURITY.md
+cat > SECURITY.md <<'EOF'
+# Security Policy
+Report vulnerabilities privately.
+Response target: within 48 hours.
+EOF
           fi
 
           if [ ! -f .github/ISSUE_TEMPLATE/bug_report.md ]; then
-            cat > .github/ISSUE_TEMPLATE/bug_report.md <<'EOF'
+cat > .github/ISSUE_TEMPLATE/bug_report.md <<'EOF'
 ---
 name: 🐞 Bug Report
 about: Report a problem
@@ -59,16 +71,16 @@ labels: bug
 ### Description
 Describe the issue.
 ### Steps to Reproduce
-1. 
-2. 
-3. 
+1.
+2.
+3.
 ### Expected Behavior
-What should happen.
+Describe what you expected.
 EOF
           fi
 
           if [ ! -f .github/PULL_REQUEST_TEMPLATE.md ]; then
-            cat > .github/PULL_REQUEST_TEMPLATE.md <<'EOF'
+cat > .github/PULL_REQUEST_TEMPLATE.md <<'EOF'
 # 🧩 Pull Request
 ## Summary
 ## Related Issue
@@ -88,10 +100,10 @@ EOF
     name: 🧾 ProofLedger Update
     runs-on: ubuntu-latest
     needs: community
-    if: github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
       - name: 🔒 Append ProofLedger Entry
+        shell: bash
         run: |
           mkdir -p proofledger
           {
@@ -100,20 +112,63 @@ EOF
             echo "Repository: $GITHUB_REPOSITORY"
             echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "SHA256: $(git rev-parse HEAD | sha256sum | cut -d' ' -f1)"
-            echo "-------------------------------------"
+            echo "--------------------------------------"
           } >> proofledger/proofledger.txt
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add proofledger/proofledger.txt
           git commit -m "🔒 Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
           git push origin main || echo "Push skipped"
 
-  discussion:
-    name: 💬 Create Discussion
+  enable-discussions:
+    name: ⚙️ Enable Discussions Automatically
     runs-on: ubuntu-latest
     needs: proofledger
-    if: github.event_name == 'push'
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
+            console.log("🔧 Enabling Discussions feature if disabled...");
+            await github.request("PATCH /repos/{owner}/{repo}", {
+              owner,
+              repo,
+              has_discussions: true
+            });
+            console.log("✅ Discussions feature is enabled.");
+
+            console.log("🔎 Checking for 'General' category...");
+            const repoData = await github.graphql(`
+              query($owner:String!, $repo:String!){
+                repository(owner:$owner, name:$repo){
+                  id
+                  discussionCategories(first:10){nodes{id name}}
+                }
+              }`,
+              { owner, repo }
+            );
+
+            const general = repoData.repository.discussionCategories.nodes.find(c => c.name === "General");
+            if (general) {
+              console.log("✅ 'General' category exists.");
+            } else {
+              console.log("➕ Creating 'General' category...");
+              const createCat = await github.graphql(`
+                mutation($repoId:ID!){
+                  createDiscussionCategory(input:{
+                    repositoryId:$repoId,
+                    name:"General",
+                    description:"General discussion topics"
+                  }){discussionCategory{id name}}
+                }`, { repoId: repoData.repository.id });
+              console.log("✅ Created:", createCat.createDiscussionCategory.discussionCategory.name);
+            }
+
+  discussion:
+    name: 💬 Create Discussion for Commit
+    runs-on: ubuntu-latest
+    needs: enable-discussions
     steps:
       - uses: actions/checkout@v4
       - uses: actions/github-script@v7
@@ -130,10 +185,6 @@ EOF
               }
             `, { owner, repo });
             const category = repoInfo.repository.discussionCategories.nodes.find(c => c.name === "General");
-            if (!category) {
-              console.log("⚠️ No 'General' category found — create one manually first.");
-              return;
-            }
             const title = `🗣️ Commit Discussion — ${process.env.GITHUB_SHA.slice(0,7)}`;
             const body = [
               `Commit pushed by @${process.env.GITHUB_ACTOR}`,
@@ -144,24 +195,18 @@ EOF
             const result = await github.graphql(`
               mutation($repoId: ID!, $catId: ID!, $title: String!, $body: String!) {
                 createDiscussion(input:{
-                  repositoryId: $repoId,
-                  categoryId: $catId,
-                  title: $title,
-                  body: $body
-                }) {
-                  discussion { url }
-                }
-              }
-            `, {
-              repoId: repoInfo.repository.id,
-              catId: category.id,
-              title,
-              body
-            });
+                  repositoryId:$repoId,
+                  categoryId:$catId,
+                  title:$title,
+                  body:$body
+                }){discussion{url}}
+              }`,
+              { repoId: repoInfo.repository.id, catId: category.id, title, body }
+            );
             console.log("✅ Discussion created:", result.createDiscussion.discussion.url);
 
   issue:
-    name: 🪶 Auto Issue
+    name: 🪶 Auto Create Issue
     runs-on: ubuntu-latest
     needs: discussion
     steps:
@@ -176,15 +221,3 @@ EOF
           assignees: ${{ github.actor }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  merge:
-    name: 🤝 Auto Merge PRs
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pascalgn/automerge-action@v0.15.6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_METHOD: merge
-          MERGE_COMMIT_MESSAGE: "🤝 Auto-merged PR by ${{ github.actor }}"
