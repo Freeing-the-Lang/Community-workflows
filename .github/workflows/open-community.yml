@@ -1,99 +1,138 @@
-name: 🌍 Open Community Automation (GraphQL Edition)
+name: 🧩 Auto Community Standards + ProofLedger
 
 on:
   push:
     branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
   contents: write
-  pull-requests: write
   issues: write
+  pull-requests: write
   discussions: write
 
 jobs:
-  create-discussion:
-    name: 💬 Auto Create Discussion (GraphQL)
+  community:
+    name: 📦 Ensure Community Standards
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
     steps:
       - name: 🧭 Checkout Repository
         uses: actions/checkout@v4
 
-      - name: 💭 Create Discussion using GraphQL
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const repoInfo = await github.graphql(`
-              query {
-                repository(owner: "${{ github.repository_owner }}", name: "${{ github.event.repository.name }}") {
-                  id
-                  discussionCategories(first: 10) {
-                    nodes { id name }
-                  }
-                }
-              }
-            `);
-            const repoId = repoInfo.repository.id;
-            const category = repoInfo.repository.discussionCategories.nodes.find(
-              c => c.name === "General"
-            );
-            if (!category) {
-              console.log("⚠️ No 'General' category found — please create one in Discussions first.");
-              return;
-            }
-            const categoryId = category.id;
-            const title = `🗣️ New Commit Discussion — ${process.env.GITHUB_SHA.slice(0, 7)}`;
-            const body = `A new commit was pushed by @${process.env.GITHUB_ACTOR}\n\nCommit message:\n${process.env.GITHUB_HEAD_REF || 'Manual Push'}\n\nSHA: ${process.env.GITHUB_SHA}`;
-            const mutation = `
-              mutation($repoId: ID!, $categoryId: ID!, $title: String!, $body: String!) {
-                createDiscussion(input: {
-                  repositoryId: $repoId,
-                  categoryId: $categoryId,
-                  title: $title,
-                  body: $body
-                }) {
-                  discussion { url }
-                }
-              }
-            `;
-            const result = await github.graphql(mutation, { repoId, categoryId, title, body });
-            console.log("✅ Discussion created:", result.createDiscussion.discussion.url);
+      - name: 🏗️ Create Missing Community Files
+        shell: bash
+        run: |
+          mkdir -p .github/ISSUE_TEMPLATE
 
-  create-issue:
-    name: 🪶 Auto Create Issue on Push
+          echo "🔍 Checking community standard files..."
+
+          # README
+          if [ ! -f README.md ]; then
+            echo "# Freeing-the-Lang" > README.md
+            echo "Language unification ecosystem — automated community compliance." >> README.md
+          fi
+
+          # LICENSE
+          if [ ! -f LICENSE ]; then
+            echo "MIT License" > LICENSE
+            echo "Copyright (c) $(date +%Y) Freeing-the-Lang" >> LICENSE
+          fi
+
+          # Code of Conduct
+          if [ ! -f CODE_OF_CONDUCT.md ]; then
+            cat > CODE_OF_CONDUCT.md <<'EOF'
+# Code of Conduct
+We follow the Contributor Covenant Code of Conduct.
+
+- Be respectful and constructive.
+- No harassment or hate speech.
+- Collaborate openly and fairly.
+EOF
+          fi
+
+          # Contributing
+          if [ ! -f CONTRIBUTING.md ]; then
+            cat > CONTRIBUTING.md <<'EOF'
+# Contributing
+1. Fork and branch.
+2. Commit cleanly with clear messages.
+3. All pushes automatically create ProofLedger and Discussions.
+EOF
+          fi
+
+          # Security Policy
+          if [ ! -f SECURITY.md ]; then
+            cat > SECURITY.md <<'EOF'
+# Security Policy
+If you discover a vulnerability, please open a private Issue or email the maintainers.
+We respond within 48 hours.
+EOF
+          fi
+
+          # Issue Template
+          if [ ! -f .github/ISSUE_TEMPLATE/bug_report.md ]; then
+            cat > .github/ISSUE_TEMPLATE/bug_report.md <<'EOF'
+---
+name: 🐞 Bug Report
+about: Report a problem
+labels: bug
+---
+
+### Description
+A clear description of the issue.
+
+### Steps to Reproduce
+1. 
+2. 
+3. 
+
+### Expected Behavior
+Describe what you expected to happen.
+EOF
+          fi
+
+          # PR Template
+          if [ ! -f .github/PULL_REQUEST_TEMPLATE.md ]; then
+            cat > .github/PULL_REQUEST_TEMPLATE.md <<'EOF'
+# 🧩 Pull Request
+## Summary
+## Related Issue
+- [ ] Build successful
+- [ ] ProofLedger updated
+- [ ] Discussion/Issue linked
+EOF
+          fi
+
+          echo "✅ All community standard files verified or created."
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md LICENSE CODE_OF_CONDUCT.md CONTRIBUTING.md SECURITY.md .github
+          git commit -m "🧩 Auto ensure community standard files" || echo "No changes to commit"
+          git push origin main || echo "Push skipped."
+
+  proofledger:
+    name: 🧾 Update ProofLedger
     runs-on: ubuntu-latest
-    if: github.event_name == 'push'
+    needs: community
     steps:
       - name: 🧭 Checkout Repository
         uses: actions/checkout@v4
-
-      - name: 🧾 Create linked issue
-        uses: peter-evans/create-issue-from-file@v4
-        with:
-          title: "🚀 Update Trigger — ${{ github.event.head_commit.message }}"
-          content-filepath: .github/ISSUE_TEMPLATE/auto.md
-          labels: |
-            automation
-            discussion-link
-          assignees: ${{ github.actor }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  auto-merge:
-    name: 🤝 Auto Merge Pull Requests
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    steps:
-      - name: 🧭 Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: ✅ Auto approve & merge PR
-        uses: pascalgn/automerge-action@v0.15.6
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MERGE_METHOD: merge
-          MERGE_COMMIT_MESSAGE: "🤝 Auto-merged PR by ${{ github.actor }}"
+      - name: 🔒 Append ledger
+        shell: bash
+        run: |
+          mkdir -p proofledger
+          echo "🧾 Generating ProofLedger..."
+          {
+            echo "Commit SHA: $GITHUB_SHA"
+            echo "Author: $GITHUB_ACTOR"
+            echo "Repo: $GITHUB_REPOSITORY"
+            echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "SHA256: $(git rev-parse HEAD | sha256sum | cut -d' ' -f1)"
+            echo "--------------------------------------"
+          } >> proofledger/proofledger.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add proofledger/proofledger.txt
+          git commit -m "🔒 Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
+          git push origin main || echo "Push skipped."
