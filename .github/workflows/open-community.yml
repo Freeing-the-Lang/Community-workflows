@@ -5,19 +5,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 🚨 This 'if' condition is the most important change.
-# It prevents the workflow from running if the commit was made by the bot itself, stopping the infinite loop.
+# 🚨 PREVENTS INFINITE LOOPS: Stops the bot from triggering itself
 if: github.actor != 'github-actions[bot]'
 
 jobs:
-  # -----------------------------------------------------------------
-  # Job 1: Creates community files if they are missing.
-  # -----------------------------------------------------------------
   community:
     name: 📦 Ensure Community Standards
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Needs permission to commit and push files.
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: 🏗️ Create Missing Community Files
@@ -26,88 +22,56 @@ jobs:
           mkdir -p .github/ISSUE_TEMPLATE
           echo "🔍 Checking community standard files..."
 
+          # --- README ---
           if [ ! -f README.md ]; then
             echo "# Freeing-the-Lang" > README.md
             echo "Language unification ecosystem — automated community setup." >> README.md
           fi
 
+          # --- LICENSE ---
           if [ ! -f LICENSE ]; then
             echo "MIT License" > LICENSE
             echo "Copyright (c) $(date +%Y) Freeing-the-Lang" >> LICENSE
           fi
 
+          # --- CODE OF CONDUCT ---
           if [ ! -f CODE_OF_CONDUCT.md ]; then
-cat > CODE_OF_CONDUCT.md <<'EOF'
-# Code of Conduct
-We follow the Contributor Covenant Code of Conduct.
-- Be respectful and constructive.
-- No harassment or hate speech.
-- Collaborate openly and fairly.
-EOF
+            printf "# Code of Conduct\nWe follow the Contributor Covenant Code of Conduct.\n- Be respectful and constructive.\n- No harassment or hate speech.\n- Collaborate openly and fairly.\n" > CODE_OF_CONDUCT.md
           fi
 
+          # --- CONTRIBUTING ---
           if [ ! -f CONTRIBUTING.md ]; then
-cat > CONTRIBUTING.md <<'EOF'
-# Contributing
-1. Fork and branch.
-2. Commit clearly.
-3. All pushes automatically update ProofLedger and Discussions.
-EOF
+            printf "# Contributing\n1. Fork and branch.\n2. Commit clearly.\n3. All pushes automatically update ProofLedger and Discussions.\n" > CONTRIBUTING.md
           fi
 
+          # --- SECURITY ---
           if [ ! -f SECURITY.md ]; then
-cat > SECURITY.md <<'EOF'
-# Security Policy
-Report vulnerabilities privately.
-Response target: within 48 hours.
-EOF
+            printf "# Security Policy\nReport vulnerabilities privately.\nResponse target: within 48 hours.\n" > SECURITY.md
           fi
 
+          # --- BUG REPORT TEMPLATE ---
           if [ ! -f .github/ISSUE_TEMPLATE/bug_report.md ]; then
-cat > .github/ISSUE_TEMPLATE/bug_report.md <<'EOF'
----
-name: 🐞 Bug Report
-about: Report a problem
-labels: bug
----
-### Description
-Describe the issue.
-### Steps to Reproduce
-1.
-2.
-3.
-### Expected Behavior
-Describe what you expected.
-EOF
+            printf -- "---\nname: 🐞 Bug Report\nabout: Report a problem\nlabels: bug\n---\n### Description\nDescribe the issue.\n### Steps to Reproduce\n1.\n2.\n3.\n### Expected Behavior\nDescribe what you expected.\n" > .github/ISSUE_TEMPLATE/bug_report.md
           fi
 
+          # --- PR TEMPLATE ---
           if [ ! -f .github/PULL_REQUEST_TEMPLATE.md ]; then
-cat > .github/PULL_REQUEST_TEMPLATE.md <<'EOF'
-# 🧩 Pull Request
-## Summary
-## Related Issue
-- [ ] Build successful
-- [ ] ProofLedger updated
-- [ ] Linked Discussions/Issues
-EOF
+            printf "# 🧩 Pull Request\n## Summary\n## Related Issue\n- [ ] Build successful\n- [ ] ProofLedger updated\n- [ ] Linked Discussions/Issues\n" > .github/PULL_REQUEST_TEMPLATE.md
           fi
 
+          # --- GIT COMMIT ---
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md LICENSE CODE_OF_CONDUCT.md CONTRIBUTING.md SECURITY.md .github
           git commit -m "chore: 🧩 Auto ensure community standard files" || echo "No changes"
           git push origin main || echo "Push skipped"
 
-  # -----------------------------------------------------------------
-  # Job 2: Appends a commit record to the ledger.
-  # Runs AFTER 'community' to avoid commit conflicts.
-  # -----------------------------------------------------------------
   proofledger:
     name: 🧾 ProofLedger Update
     runs-on: ubuntu-latest
-    needs: community # Must run after community job to avoid push conflicts
+    needs: community
     permissions:
-      contents: write # Needs permission to commit and push files.
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - name: 🔒 Append ProofLedger Entry
@@ -128,16 +92,12 @@ EOF
           git commit -m "chore: 🔒 Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
           git push origin main || echo "Push skipped"
 
-  # -----------------------------------------------------------------
-  # Job 3: Enables Discussions API.
-  # Runs in parallel with 'community'.
-  # -----------------------------------------------------------------
   enable-discussions:
     name: ⚙️ Enable Discussions Automatically
     runs-on: ubuntu-latest
     permissions:
-      administration: write # Required to PATCH repo settings
-      discussions: write    # Required to create discussion categories
+      administration: write
+      discussions: write
     steps:
       - uses: actions/github-script@v7
         with:
@@ -187,16 +147,12 @@ EOF
               }
             }
 
-  # -----------------------------------------------------------------
-  # Job 4: Creates a discussion for the user's commit.
-  # Runs AFTER 'enable-discussions' to ensure the category exists.
-  # -----------------------------------------------------------------
   discussion:
     name: 💬 Create Discussion for Commit
     runs-on: ubuntu-latest
-    needs: enable-discussions # Must wait for category to be ready
+    needs: enable-discussions
     permissions:
-      discussions: write # Required to create a new discussion
+      discussions: write
     steps:
       - uses: actions/github-script@v7
         with:
@@ -239,15 +195,11 @@ EOF
             );
             console.log("✅ Discussion created:", result.createDiscussion.discussion.url);
 
-  # -----------------------------------------------------------------
-  # Job 5: Creates an issue for the user's commit.
-  # Runs in parallel with other jobs.
-  # -----------------------------------------------------------------
   issue:
     name: 🪶 Auto Create Issue
     runs-on: ubuntu-latest
     permissions:
-      issues: write # Required to create an issue
+      issues: write
     steps:
       - name: 🚀 Create Issue for Commit
         uses: peter-evans/create-issue@v5
