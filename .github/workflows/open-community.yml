@@ -1,8 +1,10 @@
-name: 🧩 Auto Community Standards + ProofLedger
+name: 🌍 Open Community + ProofLedger Automation
 
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
   workflow_dispatch:
 
 permissions:
@@ -18,58 +20,35 @@ jobs:
     steps:
       - name: 🧭 Checkout Repository
         uses: actions/checkout@v4
-
-      - name: 🏗️ Create Missing Community Files
-        shell: bash
+      - name: 🏗️ Check & Create Community Files
         run: |
           mkdir -p .github/ISSUE_TEMPLATE
 
-          echo "🔍 Checking community standard files..."
-
-          # README
           if [ ! -f README.md ]; then
             echo "# Freeing-the-Lang" > README.md
-            echo "Language unification ecosystem — automated community compliance." >> README.md
+            echo "Language unification ecosystem — automated community setup." >> README.md
           fi
 
-          # LICENSE
           if [ ! -f LICENSE ]; then
             echo "MIT License" > LICENSE
             echo "Copyright (c) $(date +%Y) Freeing-the-Lang" >> LICENSE
           fi
 
-          # Code of Conduct
           if [ ! -f CODE_OF_CONDUCT.md ]; then
-            cat > CODE_OF_CONDUCT.md <<'EOF'
-# Code of Conduct
-We follow the Contributor Covenant Code of Conduct.
-
-- Be respectful and constructive.
-- No harassment or hate speech.
-- Collaborate openly and fairly.
-EOF
+            echo "# Code of Conduct" > CODE_OF_CONDUCT.md
+            echo "Be respectful, collaborate, and keep discussions open." >> CODE_OF_CONDUCT.md
           fi
 
-          # Contributing
           if [ ! -f CONTRIBUTING.md ]; then
-            cat > CONTRIBUTING.md <<'EOF'
-# Contributing
-1. Fork and branch.
-2. Commit cleanly with clear messages.
-3. All pushes automatically create ProofLedger and Discussions.
-EOF
+            echo "# Contributing" > CONTRIBUTING.md
+            echo "Fork, branch, commit clearly, and open PRs. ProofLedger updates automatically." >> CONTRIBUTING.md
           fi
 
-          # Security Policy
           if [ ! -f SECURITY.md ]; then
-            cat > SECURITY.md <<'EOF'
-# Security Policy
-If you discover a vulnerability, please open a private Issue or email the maintainers.
-We respond within 48 hours.
-EOF
+            echo "# Security Policy" > SECURITY.md
+            echo "Report vulnerabilities privately; response in 48 hours." >> SECURITY.md
           fi
 
-          # Issue Template
           if [ ! -f .github/ISSUE_TEMPLATE/bug_report.md ]; then
             cat > .github/ISSUE_TEMPLATE/bug_report.md <<'EOF'
 ---
@@ -77,21 +56,17 @@ name: 🐞 Bug Report
 about: Report a problem
 labels: bug
 ---
-
 ### Description
-A clear description of the issue.
-
+Describe the issue.
 ### Steps to Reproduce
 1. 
 2. 
 3. 
-
 ### Expected Behavior
-Describe what you expected to happen.
+What should happen.
 EOF
           fi
 
-          # PR Template
           if [ ! -f .github/PULL_REQUEST_TEMPLATE.md ]; then
             cat > .github/PULL_REQUEST_TEMPLATE.md <<'EOF'
 # 🧩 Pull Request
@@ -99,40 +74,117 @@ EOF
 ## Related Issue
 - [ ] Build successful
 - [ ] ProofLedger updated
-- [ ] Discussion/Issue linked
+- [ ] Linked Discussions/Issues
 EOF
           fi
-
-          echo "✅ All community standard files verified or created."
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md LICENSE CODE_OF_CONDUCT.md CONTRIBUTING.md SECURITY.md .github
-          git commit -m "🧩 Auto ensure community standard files" || echo "No changes to commit"
-          git push origin main || echo "Push skipped."
+          git commit -m "🧩 Auto ensure community standard files" || echo "No changes"
+          git push origin main || echo "Push skipped"
 
   proofledger:
-    name: 🧾 Update ProofLedger
+    name: 🧾 ProofLedger Update
     runs-on: ubuntu-latest
     needs: community
+    if: github.event_name == 'push'
     steps:
-      - name: 🧭 Checkout Repository
-        uses: actions/checkout@v4
-      - name: 🔒 Append ledger
-        shell: bash
+      - uses: actions/checkout@v4
+      - name: 🔒 Append ProofLedger Entry
         run: |
           mkdir -p proofledger
-          echo "🧾 Generating ProofLedger..."
           {
             echo "Commit SHA: $GITHUB_SHA"
             echo "Author: $GITHUB_ACTOR"
-            echo "Repo: $GITHUB_REPOSITORY"
+            echo "Repository: $GITHUB_REPOSITORY"
             echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "SHA256: $(git rev-parse HEAD | sha256sum | cut -d' ' -f1)"
-            echo "--------------------------------------"
+            echo "-------------------------------------"
           } >> proofledger/proofledger.txt
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add proofledger/proofledger.txt
           git commit -m "🔒 Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
-          git push origin main || echo "Push skipped."
+          git push origin main || echo "Push skipped"
+
+  discussion:
+    name: 💬 Create Discussion
+    runs-on: ubuntu-latest
+    needs: proofledger
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
+            const repoInfo = await github.graphql(`
+              query($owner: String!, $repo: String!) {
+                repository(owner: $owner, name: $repo) {
+                  id
+                  discussionCategories(first: 10) { nodes { id name } }
+                }
+              }
+            `, { owner, repo });
+            const category = repoInfo.repository.discussionCategories.nodes.find(c => c.name === "General");
+            if (!category) {
+              console.log("⚠️ No 'General' category found — create one manually first.");
+              return;
+            }
+            const title = `🗣️ Commit Discussion — ${process.env.GITHUB_SHA.slice(0,7)}`;
+            const body = [
+              `Commit pushed by @${process.env.GITHUB_ACTOR}`,
+              `Repository: ${process.env.GITHUB_REPOSITORY}`,
+              `SHA: ${process.env.GITHUB_SHA}`,
+              `Timestamp: ${new Date().toISOString()}`
+            ].join("\n\n");
+            const result = await github.graphql(`
+              mutation($repoId: ID!, $catId: ID!, $title: String!, $body: String!) {
+                createDiscussion(input:{
+                  repositoryId: $repoId,
+                  categoryId: $catId,
+                  title: $title,
+                  body: $body
+                }) {
+                  discussion { url }
+                }
+              }
+            `, {
+              repoId: repoInfo.repository.id,
+              catId: category.id,
+              title,
+              body
+            });
+            console.log("✅ Discussion created:", result.createDiscussion.discussion.url);
+
+  issue:
+    name: 🪶 Auto Issue
+    runs-on: ubuntu-latest
+    needs: discussion
+    steps:
+      - uses: actions/checkout@v4
+      - uses: peter-evans/create-issue-from-file@v4
+        with:
+          title: "🚀 Auto Update — ${{ github.event.head_commit.message }}"
+          content-filepath: .github/ISSUE_TEMPLATE/bug_report.md
+          labels: |
+            automation
+            proofledger
+          assignees: ${{ github.actor }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  merge:
+    name: 🤝 Auto Merge PRs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pascalgn/automerge-action@v0.15.6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_METHOD: merge
+          MERGE_COMMIT_MESSAGE: "🤝 Auto-merged PR by ${{ github.actor }}"
