@@ -5,17 +5,19 @@ on:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  discussions: write
-  administration: write
+# 🚨 This 'if' condition is the most important change.
+# It prevents the workflow from running if the commit was made by the bot itself, stopping the infinite loop.
+if: github.actor != 'github-actions[bot]'
 
 jobs:
+  # -----------------------------------------------------------------
+  # Job 1: Creates community files if they are missing.
+  # -----------------------------------------------------------------
   community:
     name: 📦 Ensure Community Standards
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Needs permission to commit and push files.
     steps:
       - uses: actions/checkout@v4
       - name: 🏗️ Create Missing Community Files
@@ -93,13 +95,19 @@ EOF
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add README.md LICENSE CODE_OF_CONDUCT.md CONTRIBUTING.md SECURITY.md .github
-          git commit -m "🧩 Auto ensure community standard files" || echo "No changes"
+          git commit -m "chore: 🧩 Auto ensure community standard files" || echo "No changes"
           git push origin main || echo "Push skipped"
 
+  # -----------------------------------------------------------------
+  # Job 2: Appends a commit record to the ledger.
+  # Runs AFTER 'community' to avoid commit conflicts.
+  # -----------------------------------------------------------------
   proofledger:
     name: 🧾 ProofLedger Update
     runs-on: ubuntu-latest
-    needs: community
+    needs: community # Must run after community job to avoid push conflicts
+    permissions:
+      contents: write # Needs permission to commit and push files.
     steps:
       - uses: actions/checkout@v4
       - name: 🔒 Append ProofLedger Entry
@@ -117,13 +125,19 @@ EOF
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add proofledger/proofledger.txt
-          git commit -m "🔒 Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
+          git commit -m "chore: 🔒 Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
           git push origin main || echo "Push skipped"
 
+  # -----------------------------------------------------------------
+  # Job 3: Enables Discussions API.
+  # Runs in parallel with 'community'.
+  # -----------------------------------------------------------------
   enable-discussions:
     name: ⚙️ Enable Discussions Automatically
     runs-on: ubuntu-latest
-    needs: proofledger
+    permissions:
+      administration: write # Required to PATCH repo settings
+      discussions: write    # Required to create discussion categories
     steps:
       - uses: actions/github-script@v7
         with:
@@ -131,13 +145,17 @@ EOF
           script: |
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
             console.log("🔧 Enabling Discussions feature if disabled...");
-            await github.request("PATCH /repos/{owner}/{repo}", {
-              owner,
-              repo,
-              has_discussions: true
-            });
-            console.log("✅ Discussions feature is enabled.");
-
+            try {
+              await github.request("PATCH /repos/{owner}/{repo}", {
+                owner,
+                repo,
+                has_discussions: true
+              });
+              console.log("✅ Discussions feature is enabled.");
+            } catch (e) {
+              console.error("Failed to enable discussions. Check 'administration: write' permission.", e.message);
+            }
+            
             console.log("🔎 Checking for 'General' category...");
             const repoData = await github.graphql(`
               query($owner:String!, $repo:String!){
@@ -154,23 +172,32 @@ EOF
               console.log("✅ 'General' category exists.");
             } else {
               console.log("➕ Creating 'General' category...");
-              const createCat = await github.graphql(`
-                mutation($repoId:ID!){
-                  createDiscussionCategory(input:{
-                    repositoryId:$repoId,
-                    name:"General",
-                    description:"General discussion topics"
-                  }){discussionCategory{id name}}
-                }`, { repoId: repoData.repository.id });
-              console.log("✅ Created:", createCat.createDiscussionCategory.discussionCategory.name);
+              try {
+                const createCat = await github.graphql(`
+                  mutation($repoId:ID!){
+                    createDiscussionCategory(input:{
+                      repositoryId:$repoId,
+                      name:"General",
+                      description:"General discussion topics"
+                    }){discussionCategory{id name}}
+                  }`, { repoId: repoData.repository.id });
+                console.log("✅ Created:", createCat.createDiscussionCategory.discussionCategory.name);
+              } catch (e) {
+                 console.error("Failed to create 'General' category. Check 'discussions: write' permission.", e.message);
+              }
             }
 
+  # -----------------------------------------------------------------
+  # Job 4: Creates a discussion for the user's commit.
+  # Runs AFTER 'enable-discussions' to ensure the category exists.
+  # -----------------------------------------------------------------
   discussion:
     name: 💬 Create Discussion for Commit
     runs-on: ubuntu-latest
-    needs: enable-discussions
+    needs: enable-discussions # Must wait for category to be ready
+    permissions:
+      discussions: write # Required to create a new discussion
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -184,14 +211,21 @@ EOF
                 }
               }
             `, { owner, repo });
+            
             const category = repoInfo.repository.discussionCategories.nodes.find(c => c.name === "General");
+            if (!category) {
+              console.error("❌ 'General' category not found. Skipping discussion creation.");
+              return;
+            }
+
             const title = `🗣️ Commit Discussion — ${process.env.GITHUB_SHA.slice(0,7)}`;
             const body = [
-              `Commit pushed by @${process.env.GITHUB_ACTOR}`,
-              `Repository: ${process.env.GITHUB_REPOSITORY}`,
-              `SHA: ${process.env.GITHUB_SHA}`,
-              `Timestamp: ${new Date().toISOString()}`
+              `A new commit was pushed by @${process.env.GITHUB_ACTOR}.`,
+              `**Repository:** ${process.env.GITHUB_REPOSITORY}`,
+              `**Commit:** ${process.env.GITHUB_SHA}`,
+              `**Message:** \`\`\`${process.env.GITHUB_EVENT_PATH ? (await require('fs').promises.readFile(process.env.GITHUB_EVENT_PATH, 'utf8').then(data => JSON.parse(data).head_commit.message)) : 'N/A'}\`\`\``
             ].join("\n\n");
+            
             const result = await github.graphql(`
               mutation($repoId: ID!, $catId: ID!, $title: String!, $body: String!) {
                 createDiscussion(input:{
@@ -205,19 +239,28 @@ EOF
             );
             console.log("✅ Discussion created:", result.createDiscussion.discussion.url);
 
+  # -----------------------------------------------------------------
+  # Job 5: Creates an issue for the user's commit.
+  # Runs in parallel with other jobs.
+  # -----------------------------------------------------------------
   issue:
     name: 🪶 Auto Create Issue
     runs-on: ubuntu-latest
-    needs: discussion
+    permissions:
+      issues: write # Required to create an issue
     steps:
-      - uses: actions/checkout@v4
-      - uses: peter-evans/create-issue-from-file@v4
+      - name: 🚀 Create Issue for Commit
+        uses: peter-evans/create-issue@v5
         with:
           title: "🚀 Auto Update — ${{ github.event.head_commit.message }}"
-          content-filepath: .github/ISSUE_TEMPLATE/bug_report.md
+          body: |
+            A new commit was pushed to `main` by @${{ github.actor }}.
+            
+            **Commit:** `${{ github.sha }}`
+            **Message:** `${{ github.event.head_commit.message }}`
+            
+            This issue was auto-generated for tracking and proof-of-work.
           labels: |
             automation
             proofledger
           assignees: ${{ github.actor }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
