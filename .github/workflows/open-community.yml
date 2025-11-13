@@ -11,95 +11,92 @@ permissions:
   issues: write
 
 jobs:
-  # 1. 커뮤니티 표준 파일(README, LICENSE 등) 자동 생성 및 확인
+
   community:
     name: 📦 Ensure Community Standards
     runs-on: ubuntu-latest
-    # 🚨 봇이 만든 커밋에 의해 무한 루프가 도는 것을 방지
     if: github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/checkout@v4
+
       - name: 🏗️ Create Missing Community Files
         shell: bash
         run: |
           mkdir -p .github/ISSUE_TEMPLATE
-          echo "🔍 커뮤니티 표준 파일 확인 중..."
+          echo "Checking community standard files..."
 
-          # --- README (없으면 생성) ---
+          # README
           if [ ! -f README.md ]; then
-            echo "# Freeing-the-Lang" > README.md
-            echo "Language unification ecosystem — automated community setup." >> README.md
+            echo "# $(basename $GITHUB_REPOSITORY)" > README.md
+            echo "Auto-generated community standard README." >> README.md
           fi
 
-          # --- LICENSE (MIT) ---
+          # LICENSE
           if [ ! -f LICENSE ]; then
             echo "MIT License" > LICENSE
-            echo "Copyright (c) $(date +%Y) Freeing-the-Lang" >> LICENSE
+            echo "Copyright (c) $(date +%Y)" >> LICENSE
           fi
 
-          # --- CODE OF CONDUCT ---
+          # CoC
           if [ ! -f CODE_OF_CONDUCT.md ]; then
-            printf "# Code of Conduct\nWe follow the Contributor Covenant Code of Conduct.\n- Be respectful and constructive.\n- No harassment or hate speech.\n- Collaborate openly and fairly.\n" > CODE_OF_CONDUCT.md
+            printf "# Code of Conduct\nWe follow Contributor Covenant.\n" > CODE_OF_CONDUCT.md
           fi
 
-          # --- CONTRIBUTING ---
+          # CONTRIBUTING
           if [ ! -f CONTRIBUTING.md ]; then
-            printf "# Contributing\n1. Fork and branch.\n2. Commit clearly.\n3. All pushes automatically update ProofLedger and Discussions.\n" > CONTRIBUTING.md
+            printf "# Contributing\nAuto-updated by workflow.\n" > CONTRIBUTING.md
           fi
 
-          # --- SECURITY ---
+          # SECURITY
           if [ ! -f SECURITY.md ]; then
-            printf "# Security Policy\nReport vulnerabilities privately.\nResponse target: within 48 hours.\n" > SECURITY.md
+            printf "# Security Policy\nReport vulnerabilities privately.\n" > SECURITY.md
           fi
 
-          # --- BUG REPORT TEMPLATE ---
+          # Bug template
           if [ ! -f .github/ISSUE_TEMPLATE/bug_report.md ]; then
-            printf -- "---\nname: 🐞 Bug Report\nabout: Report a problem\nlabels: bug\n---\n### Description\nDescribe the issue.\n### Steps to Reproduce\n1.\n2.\n3.\n### Expected Behavior\nDescribe what you expected.\n" > .github/ISSUE_TEMPLATE/bug_report.md
+            printf -- "---\nname: 🐞 Bug Report\nabout: Report a problem\nlabels: bug\n---\n### Description\nIssue details\n" > .github/ISSUE_TEMPLATE/bug_report.md
           fi
 
-          # --- PR TEMPLATE ---
+          # PR template
           if [ ! -f .github/PULL_REQUEST_TEMPLATE.md ]; then
-            printf "# 🧩 Pull Request\n## Summary\n## Related Issue\n- [ ] Build successful\n- [ ] ProofLedger updated\n- [ ] Linked Discussions/Issues\n" > .github/PULL_REQUEST_TEMPLATE.md
+            printf "# 🧩 Pull Request\n## Summary\n## Checks\n- [ ] ProofLedger updated\n" > .github/PULL_REQUEST_TEMPLATE.md
           fi
 
-          # --- 변경 사항 커밋 ---
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add README.md LICENSE CODE_OF_CONDUCT.md CONTRIBUTING.md SECURITY.md .github
-          # 변경 사항이 있을 때만 커밋
-          git diff --staged --quiet || git commit -m "chore: 🧩 Auto ensure community standard files"
+          git diff --staged --quiet || git commit -m "chore: Auto ensure community standard files"
           git push origin main || echo "Nothing to push"
 
-  # 2. 모든 커밋을 ProofLedger에 영구 기록
   proofledger:
     name: 🧾 ProofLedger Update
     runs-on: ubuntu-latest
     needs: community
-    # 봇이 아닌 경우에만 실행
     if: github.actor != 'github-actions[bot]'
     steps:
       - uses: actions/checkout@v4
+
       - name: 🔒 Append ProofLedger Entry
         shell: bash
         run: |
           mkdir -p proofledger
-          # 로그 엔트리 생성
           {
             echo "Commit SHA: $GITHUB_SHA"
             echo "Author: $GITHUB_ACTOR"
-            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Repo: $GITHUB_REPOSITORY"
             echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
             echo "SHA256: $(git rev-parse HEAD | sha256sum | cut -d' ' -f1)"
             echo "--------------------------------------"
           } >> proofledger/proofledger.txt
-          
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
           git add proofledger/proofledger.txt
-          git commit -m "chore: 🔒 Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
+          git commit -m "chore: Update ProofLedger for $GITHUB_SHA" || echo "No new ledger entry"
           git push origin main || echo "Push skipped"
 
-  # 3. 리포지토리의 Discussions 기능 활성화 및 카테고리 생성
   enable-discussions:
     name: ⚙️ Enable Discussions Automatically
     runs-on: ubuntu-latest
@@ -110,51 +107,50 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
-            console.log("🔧 Discussions 기능 활성화 확인 중...");
+
+            // Try enabling discussions
             try {
-              // 일부 권한 설정에 따라 403 에러가 날 수 있으나 시도함
               await github.request("PATCH /repos/{owner}/{repo}", {
                 owner,
                 repo,
                 has_discussions: true
               });
-              console.log("✅ Discussions 기능이 활성화되었습니다.");
-            } catch (e) {
-              console.error("⚠️ 자동 활성화 실패 (토큰 권한 부족 가능성). Repo Settings에서 수동으로 켜주세요.", e.message);
+              console.log("Discussions enabled.");
+            } catch (_) {
+              console.log("Enable failed (permissions). Skipping.");
             }
-            
-            // 'General' 카테고리 확인 및 생성
+
+            // Check category
             const repoData = await github.graphql(`
-              query($owner:String!, $repo:String!){
-                repository(owner:$owner, name:$repo){
+              query($owner:String!, $repo:String!) {
+                repository(owner:$owner, name:$repo) {
                   id
-                  discussionCategories(first:10){nodes{id name}}
+                  discussionCategories(first:20){nodes{id name}}
                 }
               }`,
               { owner, repo }
             );
 
             const general = repoData.repository.discussionCategories.nodes.find(c => c.name === "General");
-            if (general) {
-              console.log("✅ 'General' 카테고리가 이미 존재합니다.");
-            } else {
-              console.log("➕ 'General' 카테고리 생성 중...");
-              try {
-                const createCat = await github.graphql(`
-                  mutation($repoId:ID!){
-                    createDiscussionCategory(input:{
-                      repositoryId:$repoId,
-                      name:"General",
-                      description:"General discussion topics"
-                    }){discussionCategory{id name}}
-                  }`, { repoId: repoData.repository.id });
-                console.log("✅ 생성 완료:", createCat.createDiscussionCategory.discussionCategory.name);
-              } catch (e) {
-                 console.error("카테고리 생성 실패.", e.message);
-              }
+            if (general) return;
+
+            // Create General
+            try {
+              await github.graphql(`
+                mutation($repoId:ID!) {
+                  createDiscussionCategory(input:{
+                    repositoryId:$repoId,
+                    name:"General",
+                    description:"General discussions"
+                  }){discussionCategory{id}}
+                }`,
+                { repoId: repoData.repository.id }
+              );
+              console.log("General category created.");
+            } catch (e) {
+              console.log("Category creation failed:", e.message);
             }
 
-  # 4. 커밋 내용을 바탕으로 새 Discussion 생성
   discussion:
     name: 💬 Create Discussion for Commit
     runs-on: ubuntu-latest
@@ -165,32 +161,38 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
+            const fs = require("fs");
+
             const [owner, repo] = process.env.GITHUB_REPOSITORY.split("/");
+            const sha = process.env.GITHUB_SHA;
+
             const repoInfo = await github.graphql(`
-              query($owner: String!, $repo: String!) {
-                repository(owner: $owner, name: $repo) {
+              query($owner:String!, $repo:String!){
+                repository(owner:$owner, name:$repo){
                   id
-                  discussionCategories(first: 10) { nodes { id name } }
+                  discussionCategories(first:20){nodes{id name}}
                 }
-              }
-            `, { owner, repo });
-            
+              }`,
+              { owner, repo }
+            );
+
             const category = repoInfo.repository.discussionCategories.nodes.find(c => c.name === "General");
             if (!category) {
-              console.log("❌ General 카테고리를 찾을 수 없어 토론 생성을 건너뜁니다.");
+              console.log("No General category. Skipping.");
               return;
             }
 
-            const title = `🗣️ Commit Discussion — ${process.env.GITHUB_SHA.slice(0,7)}`;
-            const body = [
-              `A new commit was pushed by @${process.env.GITHUB_ACTOR}.`,
-              `**Repository:** ${process.env.GITHUB_REPOSITORY}`,
-              `**Commit:** ${process.env.GITHUB_SHA}`,
-              `**Message:** \`\`\`${process.env.GITHUB_EVENT_PATH ? (await require('fs').promises.readFile(process.env.GITHUB_EVENT_PATH, 'utf8').then(data => JSON.parse(data).head_commit.message)) : 'N/A'}\`\`\``
-            ].join("\n\n");
-            
-            const result = await github.graphql(`
-              mutation($repoId: ID!, $catId: ID!, $title: String!, $body: String!) {
+            let message = "N/A";
+            try {
+              const raw = JSON.parse(fs.readFileSync(process.env.GITHUB_EVENT_PATH));
+              if (raw.head_commit) message = raw.head_commit.message;
+            } catch (_) {}
+
+            const title = `🗣️ Commit Discussion — ${sha.slice(0, 7)}`;
+            const body = `Commit pushed by @${process.env.GITHUB_ACTOR}\n\n**Commit:** ${sha}\n\n**Message:** \`${message}\``;
+
+            const res = await github.graphql(`
+              mutation($repoId:ID!,$catId:ID!,$title:String!,$body:String!){
                 createDiscussion(input:{
                   repositoryId:$repoId,
                   categoryId:$catId,
@@ -200,30 +202,26 @@ jobs:
               }`,
               { repoId: repoInfo.repository.id, catId: category.id, title, body }
             );
-            console.log("✅ Discussion 생성됨:", result.createDiscussion.discussion.url);
 
-  # 5. 이슈 생성 및 커밋 작성자 자동 할당 (Auto Assign)
-  # 🚨 수정 사항: 존재하지 않는 외부 액션 대신 github-script 사용으로 변경
+            console.log("Discussion created:", res.createDiscussion.discussion.url);
+
   issue:
     name: 🪶 Auto Create Issue & Assign
     runs-on: ubuntu-latest
     if: github.actor != 'github-actions[bot]'
     steps:
-      - name: 🚀 Create Issue for Commit
-        uses: actions/github-script@v7
+      - uses: actions/github-script@v7
         with:
           script: |
-            const commitMsg = context.payload.head_commit ? context.payload.head_commit.message : 'Manual Trigger';
+            const commitMsg = context.payload.head_commit ? context.payload.head_commit.message : "Manual Trigger";
             const sha = context.sha;
             const actor = context.actor;
-            
-            console.log(`Creating issue for commit: ${sha} by ${actor}`);
 
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
               title: `🚀 Auto Update — ${commitMsg}`,
-              body: `A new commit was pushed to \`main\` by @${actor}.\n\n**Commit:** \`${sha}\`\n**Message:** \`${commitMsg}\`\n\nThis issue was auto-generated for tracking and proof-of-work.`,
-              labels: ['automation', 'proofledger'],
+              body: `Commit pushed by @${actor}\n\n**SHA:** \`${sha}\`\n\nAuto issue.`,
+              labels: ["automation", "proofledger"],
               assignees: [actor]
             });
